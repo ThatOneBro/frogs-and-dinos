@@ -182,13 +182,8 @@ function runSystems() {
 function loop() {
   if (paused) return;
   runSystems();
-  for (let i = 0; i < MAP_WIDTH; i++) {
-    for (let j = 0; j < MAP_HEIGHT; j++) {
-      const tile = tileStates[i][j];
-      if (tile.owner !== Faction.UNALIGNED) {
-        console.log(tile);
-      }
-    }
+  for (const tile of occupied) {
+    console.log(tile);
   }
   setTimeout(loop, LOOP_INTERVAL);
 }
