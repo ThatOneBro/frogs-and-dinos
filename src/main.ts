@@ -2,23 +2,13 @@ import "./style.css";
 
 const MAP_WIDTH = 10;
 const MAP_HEIGHT = 10;
+const LOOP_INTERVAL = 500;
 
-const appDiv = document.querySelector<HTMLDivElement>("#app")!;
-if (!appDiv) {
-  throw new Error("Cannot find `#app` in document!");
-}
+let paused = false;
 
-appDiv.innerHTML = `
-  <div>
-    <h1>Frogs and Dinos</h1>
-    <div class="game-map" id="map"></div>
-  </div>
-`;
-
-const mapDiv = document.querySelector<HTMLDivElement>("#map");
-if (!mapDiv) {
-  throw new Error("Cannot find `#map` in document!");
-}
+const tiles = [] as HTMLDivElement[][];
+const tileStates = [] as TileState[][];
+const occupied = new Set<TileState>();
 
 enum Faction {
   UNALIGNED = "FACTION_UNALIGNED",
@@ -45,17 +35,59 @@ type TileState = {
   status: BattleStatus;
   attacking: boolean;
   attackDirection: AttackDirection;
+  counter: number;
+  troops: number;
 };
 
 type TileUpdate = Partial<Omit<TileState, "ele">>;
 type TileUpdateKey = keyof TileUpdate;
 
-const tiles = [] as HTMLDivElement[][];
-const tileStates = [] as TileState[][];
+const appDiv = document.querySelector<HTMLDivElement>("#app")!;
+if (!appDiv) {
+  throw new Error("Cannot find `#app` in document!");
+}
+
+appDiv.innerHTML = `
+  <div>
+    <h1>Frogs and Dinos</h1>
+    <div class="game-map" id="map"></div>
+  </div>
+`;
+
+const mapDiv = document.querySelector<HTMLDivElement>("#map");
+if (!mapDiv) {
+  throw new Error("Cannot find `#map` in document!");
+}
+
+const tileEles = [] as HTMLDivElement[];
+for (let i = 0; i < MAP_WIDTH; i++) {
+  const tileRow = [] as HTMLDivElement[];
+  const tileStateRow = [] as TileState[];
+  for (let j = 0; j < MAP_HEIGHT; j++) {
+    const tile = document.createElement("div");
+    tile.className = "game-map-tile";
+    tile.id = `tile_${i}-${j}`;
+    tileEles.push(tile);
+    tileRow.push(tile);
+    tileStateRow.push({
+      ele: tile,
+      owner: Faction.UNALIGNED,
+      status: BattleStatus.UNOCCUPIED,
+      attacking: false,
+      attackDirection: AttackDirection.NONE,
+      counter: 0,
+      troops: 0,
+    });
+  }
+  tiles.push(tileRow);
+  tileStates.push(tileStateRow);
+}
+mapDiv.append(...tileEles);
 
 function updateTile(tile: TileState, update: TileUpdate) {
   const updates = [update] as TileUpdate[];
-  const classList = tile.ele.classList;
+  const ele = tile.ele;
+  const classList = ele.classList;
   while (updates.length) {
     const currentUpdate = updates.shift()!;
     for (const [key, val] of Object.entries(currentUpdate)) {
@@ -66,11 +98,14 @@ function updateTile(tile: TileState, update: TileUpdate) {
           const prevOwner = tile.owner;
           tile.owner = val as TileState["owner"];
           // Add owner class
-          if (val !== Faction.UNALIGNED) {
+          if (val === Faction.UNALIGNED) {
+            occupied.delete(tile);
+          } else {
             classList.add(tile.owner);
             if (prevOwner === Faction.UNALIGNED && update.status === undefined) {
               updates.push({ status: BattleStatus.IDLE });
             }
+            occupied.add(tile);
           }
           break;
         case "status":
@@ -104,35 +139,19 @@ function updateTile(tile: TileState, update: TileUpdate) {
             updates.push({ attackDirection: AttackDirection.NONE });
           }
           break;
+        case "troops":
+          tile.troops = update.troops as TileState["troops"];
+          ele.innerHTML = `${tile.troops}`;
+          break;
+        case "counter":
+          tile.counter = update.counter as TileState["counter"];
+          break;
         default:
           throw new Error("Invalid key!");
       }
     }
   }
 }
-
-const tileEles = [] as HTMLDivElement[];
-for (let i = 0; i < MAP_WIDTH; i++) {
-  const tileRow = [] as HTMLDivElement[];
-  const tileStateRow = [] as TileState[];
-  for (let j = 0; j < MAP_HEIGHT; j++) {
-    const tile = document.createElement("div");
-    tile.className = "game-map-tile";
-    tile.id = `tile_${i}-${j}`;
-    tileEles.push(tile);
-    tileRow.push(tile);
-    tileStateRow.push({
-      ele: tile,
-      owner: Faction.UNALIGNED,
-      status: BattleStatus.UNOCCUPIED,
-      attacking: false,
-      attackDirection: AttackDirection.NONE,
-    });
-  }
-  tiles.push(tileRow);
-  tileStates.push(tileStateRow);
-}
-mapDiv.append(...tileEles);
 
 function randomIntFromInterval(min: number, max: number): number {
   // min and max included
@@ -148,41 +167,46 @@ function getRandomTile(): TileState {
   return tileStates[i][j];
 }
 
-let paused = false;
-const systems = [] as (() => void)[];
-
-const LOOP_INTERVAL = 100;
+function runSystems() {
+  // System for increasing troops on occupied territory
+  for (const tile of occupied) {
+    if (tile.status === BattleStatus.IDLE) {
+      updateTile(tile, { counter: tile.counter + 1 });
+      if (tile.counter === 4) {
+        updateTile(tile, { counter: 0, troops: tile.troops + 1 });
+      }
+    }
+  }
+}
 
 function loop() {
   if (paused) return;
-
-  for (const system of systems) {
-    system();
+  runSystems();
+  for (let i = 0; i < MAP_WIDTH; i++) {
+    for (let j = 0; j < MAP_HEIGHT; j++) {
+      const tile = tileStates[i][j];
+      if (tile.owner !== Faction.UNALIGNED) {
+        console.log(tile);
+      }
+    }
   }
-
   setTimeout(loop, LOOP_INTERVAL);
 }
 
 function startGame() {
   // Seed with first squares
   const firstFrog = getRandomTile();
-  updateTile(firstFrog, { owner: Faction.FROG });
+  updateTile(firstFrog, { owner: Faction.FROG, troops: 10 });
   let firstDino: TileState;
   do {
     firstDino = getRandomTile();
   } while (firstDino.owner !== Faction.UNALIGNED);
-  updateTile(firstDino, { owner: Faction.DINO });
+  updateTile(firstDino, { owner: Faction.DINO, troops: 10 });
 
   loop();
 }
 
 startGame();
-
-for (let i = 0; i < MAP_WIDTH; i++) {
-  for (let j = 0; j < MAP_HEIGHT; j++) {
-    console.log(tileStates[i][j]);
-  }
-}
 
 // Actions
 // Actions update state after N ticks
