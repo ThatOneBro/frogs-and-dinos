@@ -144,9 +144,36 @@ function maybeAttack() {
     highlighted !== selected &&
     isAdjacentTile(selected, highlighted)
   ) {
-    updateTile(highlighted, { owner: selected.owner, troops: selected.troops });
-    updateTile(selected, { troops: 0 });
-    maybeSelectTile(highlighted);
+    if (highlighted.owner === selected.owner) {
+      updateTile(highlighted, { troops: highlighted.troops + selected.troops });
+      updateTile(selected, { troops: 0 });
+      maybeSelectTile(highlighted);
+    } else if (highlighted.owner === Faction.UNALIGNED) {
+      updateTile(highlighted, { owner: selected.owner, troops: selected.troops });
+      updateTile(selected, { troops: 0 });
+      maybeSelectTile(highlighted);
+    } else {
+      // Attack
+    }
+  }
+}
+
+function maybeSplit() {
+  if (
+    selected &&
+    highlighted &&
+    highlighted !== selected &&
+    isAdjacentTile(selected, highlighted)
+  ) {
+    const halfRoundedUp = Math.ceil(selected.troops / 2);
+    if (selected.owner === highlighted.owner || highlighted.owner === Faction.UNALIGNED) {
+      updateTile(highlighted, {
+        owner: selected.owner,
+        troops: highlighted.troops + halfRoundedUp,
+      });
+      updateTile(selected, { troops: selected.troops - halfRoundedUp });
+      maybeSelectTile(highlighted);
+    }
   }
 }
 
@@ -301,6 +328,24 @@ function attachKeybindings() {
       case "a":
         maybeAttack();
         break;
+      case "s":
+        if (highlighted) {
+          maybeSelectTile(highlighted);
+        }
+        break;
+      case "d":
+        if (selected) {
+          selected.ele.classList.remove("SELECTED");
+          selected = undefined;
+        }
+        if (highlighted) {
+          highlighted.ele.classList.remove("HIGHLIGHTED");
+          highlighted = undefined;
+        }
+        break;
+      case "x":
+        maybeSplit();
+        break;
       default:
     }
   });
@@ -323,10 +368,15 @@ startGame();
 attachKeybindings();
 
 // TODO: Current, current:
-// Add movement
-// Add deselect
-// Add split
+// Add morale bar
+// Add auto-retreat
+// Add bonus after surrounding
+// Add attacks
+// Add movement arrows
+// Add delay to movement
 // Fix graphics at this point
+// Add Day 1 ... Day 2 (global timer... should we refactor to use counter as future timestamp)
+// Refactor to have an action queue?
 
 // D to deselect
 // A to attack
@@ -365,3 +415,6 @@ attachKeybindings();
 
 // Each person must choose a specialization...?
 // Can delegate control to leaders when afk / auto-delegate when disconnected
+
+// Potential exploits:
+// moving troops back and forth to get max ticks on both stacks
