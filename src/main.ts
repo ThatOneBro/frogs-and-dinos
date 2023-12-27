@@ -3,12 +3,17 @@ import "./style.css";
 const MAP_WIDTH = 10;
 const MAP_HEIGHT = 10;
 const LOOP_INTERVAL = 500;
+const DOUBLE_CLICK_TIMEOUT = 600;
 
 let paused = false;
+let highlighted: TileState | undefined;
+let selected: TileState | undefined;
+let doubleClickValid = false;
 
 const tiles = [] as HTMLDivElement[][];
 const tileStates = [] as TileState[][];
 const occupied = new Set<TileState>();
+const attacking = new Set<TileState>();
 
 enum Faction {
   UNALIGNED = "FACTION_UNALIGNED",
@@ -30,6 +35,7 @@ enum AttackDirection {
 }
 
 type TileState = {
+  position: [x: number, y: number];
   ele: HTMLDivElement;
   owner: Faction;
   status: BattleStatus;
@@ -41,6 +47,7 @@ type TileState = {
 
 type TileUpdate = Partial<Omit<TileState, "ele">>;
 type TileUpdateKey = keyof TileUpdate;
+type TileUpdateVal<K extends TileUpdateKey> = TileState[K];
 
 const appDiv = document.querySelector<HTMLDivElement>("#app")!;
 if (!appDiv) {
@@ -67,9 +74,9 @@ for (let i = 0; i < MAP_WIDTH; i++) {
     const tile = document.createElement("div");
     tile.className = "game-map-tile";
     tile.id = `tile_${i}-${j}`;
-    tileEles.push(tile);
-    tileRow.push(tile);
-    tileStateRow.push({
+
+    const tileState = {
+      position: [i, j],
       ele: tile,
       owner: Faction.UNALIGNED,
       status: BattleStatus.UNOCCUPIED,
@@ -77,60 +84,133 @@ for (let i = 0; i < MAP_WIDTH; i++) {
       attackDirection: AttackDirection.NONE,
       counter: 0,
       troops: 0,
-    });
+    } as TileState;
+
+    tile.addEventListener("click", () => onTileClick(tileState));
+
+    tileEles.push(tile);
+    tileRow.push(tile);
+    tileStateRow.push(tileState);
   }
   tiles.push(tileRow);
   tileStates.push(tileStateRow);
 }
 mapDiv.append(...tileEles);
 
+function maybeSelectTile(tile: TileState) {
+  if (tile.troops > 0) {
+    if (tile !== selected) {
+      if (selected) {
+        selected.ele.classList.remove("SELECTED");
+      }
+      tile.ele.classList.add("SELECTED");
+      selected = tile;
+    }
+  }
+}
+
+function onTileClick(tile: TileState) {
+  if (tile !== highlighted) {
+    // Check if there is selected, if so, remove selected modifier from ele
+    if (highlighted) {
+      highlighted.ele.classList.remove("HIGHLIGHTED");
+      doubleClickValid = false;
+    }
+    tile.ele.classList.add("HIGHLIGHTED");
+    highlighted = tile;
+  } else if (doubleClickValid) {
+    onTileDoubleClick(tile);
+  }
+
+  setTimeout(() => {
+    doubleClickValid = false;
+  }, DOUBLE_CLICK_TIMEOUT);
+  doubleClickValid = true;
+}
+
+function isAdjacentTile(currentTile: TileState, comparedTile: TileState): boolean {
+  const [x1, y1] = currentTile.position;
+  const [x2, y2] = comparedTile.position;
+  if (Math.abs(x1 - x2) <= 1 && Math.abs(y1 - y2) <= 1) {
+    return true;
+  }
+  return false;
+}
+
+function maybeAttack() {
+  if (
+    selected &&
+    highlighted &&
+    highlighted !== selected &&
+    isAdjacentTile(selected, highlighted)
+  ) {
+    updateTile(highlighted, { owner: selected.owner, troops: selected.troops });
+    updateTile(selected, { troops: 0 });
+    maybeSelectTile(highlighted);
+  }
+}
+
+function onTileDoubleClick(tile: TileState) {
+  maybeSelectTile(tile);
+}
+
+// TODO: beforeTileUpdate, afterTileUpdate
 function updateTile(tile: TileState, update: TileUpdate) {
   const updates = [update] as TileUpdate[];
   const ele = tile.ele;
   const classList = ele.classList;
   while (updates.length) {
     const currentUpdate = updates.shift()!;
-    for (const [key, val] of Object.entries(currentUpdate)) {
-      switch (key as TileUpdateKey) {
-        case "owner":
+    console.log("currentUpdate", currentUpdate);
+    for (const entry of Object.entries(currentUpdate)) {
+      const key = entry[0] as TileUpdateKey;
+      switch (key) {
+        case "owner": {
+          const val = entry[1] as TileUpdateVal<typeof key>;
           // Remove previous owner
           classList.remove(Faction.FROG, Faction.DINO);
           const prevOwner = tile.owner;
-          tile.owner = val as TileState["owner"];
+          tile.owner = val;
           // Add owner class
           if (val === Faction.UNALIGNED) {
             occupied.delete(tile);
           } else {
             classList.add(tile.owner);
-            if (prevOwner === Faction.UNALIGNED && update.status === undefined) {
+            if (prevOwner === Faction.UNALIGNED) {
               updates.push({ status: BattleStatus.IDLE });
             }
             occupied.add(tile);
           }
           break;
-        case "status":
+        }
+        case "status": {
+          const val = entry[1] as TileUpdateVal<typeof key>;
           classList.remove(BattleStatus.IDLE);
-          tile.status = val as TileState["status"];
+          tile.status = val;
           // Add status class
           if (val !== BattleStatus.UNOCCUPIED) {
             classList.add(tile.status);
           }
           break;
-        case "attackDirection":
+        }
+        case "attackDirection": {
+          const val = entry[1] as TileUpdateVal<typeof key>;
           classList.remove(
             AttackDirection.UP,
             AttackDirection.DOWN,
             AttackDirection.LEFT,
             AttackDirection.RIGHT
           );
-          tile.attackDirection = val as TileState["attackDirection"];
+          tile.attackDirection = val;
           // Add attack direction class
           if (val !== AttackDirection.NONE) {
             classList.add(tile.attackDirection);
           }
           break;
-        case "attacking":
-          tile.attacking = val as TileState["attacking"];
+        }
+        case "attacking": {
+          const val = entry[1] as TileUpdateVal<typeof key>;
+          tile.attacking = val;
           // Add or remove attacking class
           if (tile.attacking) {
             classList.add("attacking");
@@ -139,10 +219,27 @@ function updateTile(tile: TileState, update: TileUpdate) {
             updates.push({ attackDirection: AttackDirection.NONE });
           }
           break;
-        case "troops":
-          tile.troops = update.troops as TileState["troops"];
+        }
+        case "troops": {
+          const prevTroops = tile.troops;
+          const val = entry[1] as TileUpdateVal<typeof key>;
+          tile.troops = val;
           ele.innerHTML = `${tile.troops}`;
+          if (val === 0) {
+            occupied.delete(tile);
+            updates.push({ status: BattleStatus.UNOCCUPIED });
+            classList.remove("OCCUPIED");
+            ele.innerHTML = "";
+          } else {
+            classList.add(tile.owner);
+            if (prevTroops === 0) {
+              updates.push({ status: BattleStatus.IDLE });
+              classList.add("OCCUPIED");
+            }
+            occupied.add(tile);
+          }
           break;
+        }
         case "counter":
           tile.counter = update.counter as TileState["counter"];
           break;
@@ -159,12 +256,19 @@ function randomIntFromInterval(min: number, max: number): number {
 }
 
 function getRandomTile(): TileState {
-  const i = randomIntFromInterval(0, MAP_WIDTH - 1);
-  const j = randomIntFromInterval(0, MAP_HEIGHT - 1);
-  if (!(tileStates[i] && tileStates[i][j])) {
+  const x = randomIntFromInterval(0, MAP_WIDTH - 1);
+  const y = randomIntFromInterval(0, MAP_HEIGHT - 1);
+  if (!(tileStates[x] && tileStates[x][y])) {
     throw new Error("Tile out of bounds!");
   }
-  return tileStates[i][j];
+  return tileStates[x][y];
+}
+
+function getTileAt(x: number, y: number): TileState {
+  if (!(tileStates[x] && tileStates[x][y])) {
+    throw new Error("Tile out of bounds!");
+  }
+  return tileStates[x][y];
 }
 
 function runSystems() {
@@ -177,6 +281,9 @@ function runSystems() {
       }
     }
   }
+  // Battle system
+
+  // Rebellion system
 }
 
 function loop() {
@@ -186,6 +293,17 @@ function loop() {
     console.log(tile);
   }
   setTimeout(loop, LOOP_INTERVAL);
+}
+
+function attachKeybindings() {
+  document.addEventListener("keypress", (event: KeyboardEvent) => {
+    switch (event.key) {
+      case "a":
+        maybeAttack();
+        break;
+      default:
+    }
+  });
 }
 
 function startGame() {
@@ -202,6 +320,33 @@ function startGame() {
 }
 
 startGame();
+attachKeybindings();
+
+// TODO: Current, current:
+// Add movement
+// Add deselect
+// Add split
+// Fix graphics at this point
+
+// D to deselect
+// A to attack
+// S to split
+// Space bar for volley / counter volley
+
+// Current objective:
+// Add movement of stacks
+// Add battle system
+// Add splitting of stacks
+// Add population modifier
+
+// PEPE vs YEE passives:
+// PEPE: quickly capture, +1 to espionage and spying, +1 to cleansing, -10 to conversions (Fascism)
+// YEE: quickly influence culture in captured areas, , -5 to quality
+
+// Cleansing - Sparks rebellions, reduces pops, reduces cooperation until fully cleansed
+// Cleansing also affects AE, prompts UN to intervene
+
+// YEE - can cleanse diplomatically, cultural drift
 
 // Actions
 // Actions update state after N ticks
@@ -217,3 +362,6 @@ startGame();
 // Game loop
 // Set tiles as active when
 // Systems
+
+// Each person must choose a specialization...?
+// Can delegate control to leaders when afk / auto-delegate when disconnected

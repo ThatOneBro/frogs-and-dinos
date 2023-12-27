@@ -77,8 +77,9 @@ button:focus-visible {
 .game-map {
   width: 525px;
   height: 525px;
-  display: flex;
+  display: grid;
   flex-wrap: wrap;
+  grid-template-columns: auto auto auto auto auto auto auto auto auto auto;
 }
 
 .game-map-tile {
@@ -88,8 +89,13 @@ button:focus-visible {
   margin: 1px 1px 0 1px;
   background-color: white;
   text-align: center;
-  font-size: 18px;
+  font-size: 25px;
   font-weight: 700;
+  color: #1a1a1a;
+
+  -webkit-user-select: none; /* Safari */
+  -ms-user-select: none; /* IE 10 and IE 11 */
+  user-select: none; /* Standard syntax */
 }
 
 .game-map-tile.FACTION_DINO {
@@ -98,4 +104,30 @@ button:focus-visible {
 
 .game-map-tile.FACTION_FROG {
   background-color: green;
+}
+
+.game-map-tile.HIGHLIGHTED {
+  width: 46px;
+  height: 46px;
+  margin: 2px;
+}
+
+.game-map-tile.SELECTED {
+  width: 46px;
+  height: 46px;
+  border: 2px solid yellow;
+}
+
+.game-map-tile.FACTION_DINO.OCCUPIED {
+  background-image: url("yee.jpg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+}
+
+.game-map-tile.FACTION_FROG.OCCUPIED {
+  background-image: url("pepe.jpg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
 }
