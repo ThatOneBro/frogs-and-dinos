@@ -1,4 +1,5 @@
 import "./style.css";
+import { PriorityQueue } from "./util/pqueue";
 
 const MAP_WIDTH = 10;
 const MAP_HEIGHT = 10;
@@ -6,14 +7,22 @@ const LOOP_INTERVAL = 500;
 const DOUBLE_CLICK_TIMEOUT = 600;
 
 let paused = false;
-let highlighted: TileState | undefined;
-let selected: TileState | undefined;
+let highlighted: TileState | null = null;
+let selected: TileState | null = null;
 let doubleClickValid = false;
 
 const tiles = [] as HTMLDivElement[][];
 const tileStates = [] as TileState[][];
 const occupied = new Set<TileState>();
-const attacking = new Set<TileState>();
+// const attacking = new Set<TileState>();
+
+type QueueEvent = {
+  ticksRequired: number;
+  ticksLeft: number;
+  callback: () => void;
+};
+
+const eventQueue = new PriorityQueue((a: QueueEvent, b: QueueEvent) => a.ticksLeft - b.ticksLeft);
 
 enum Faction {
   UNALIGNED = "FACTION_UNALIGNED",
@@ -26,23 +35,15 @@ enum BattleStatus {
   IDLE = "STATUS_IDLE",
 }
 
-enum AttackDirection {
-  NONE = "ATK_NONE",
-  UP = "ATK_UP",
-  LEFT = "ATK_LEFT",
-  RIGHT = "ATK_RIGHT",
-  DOWN = "ATK_DOWN",
-}
-
 type TileState = {
   position: [x: number, y: number];
   ele: HTMLDivElement;
   owner: Faction;
   status: BattleStatus;
-  attacking: boolean;
-  attackDirection: AttackDirection;
+  attacking: TileState | null;
   counter: number;
-  troops: number;
+  troopCount: number;
+  troopMorale: number;
 };
 
 type TileUpdate = Partial<Omit<TileState, "ele">>;
@@ -80,10 +81,10 @@ for (let i = 0; i < MAP_WIDTH; i++) {
       ele: tile,
       owner: Faction.UNALIGNED,
       status: BattleStatus.UNOCCUPIED,
-      attacking: false,
-      attackDirection: AttackDirection.NONE,
+      attacking: null,
       counter: 0,
-      troops: 0,
+      troopCount: 0,
+      troopMorale: 100,
     } as TileState;
 
     tile.addEventListener("click", () => onTileClick(tileState));
@@ -98,7 +99,7 @@ for (let i = 0; i < MAP_WIDTH; i++) {
 mapDiv.append(...tileEles);
 
 function maybeSelectTile(tile: TileState) {
-  if (tile.troops > 0) {
+  if (tile.troopCount > 0) {
     if (tile !== selected) {
       if (selected) {
         selected.ele.classList.remove("SELECTED");
@@ -145,15 +146,16 @@ function maybeAttack() {
     isAdjacentTile(selected, highlighted)
   ) {
     if (highlighted.owner === selected.owner) {
-      updateTile(highlighted, { troops: highlighted.troops + selected.troops });
-      updateTile(selected, { troops: 0 });
+      updateTile(highlighted, { troopCount: highlighted.troopCount + selected.troopCount });
+      updateTile(selected, { troopCount: 0 });
       maybeSelectTile(highlighted);
-    } else if (highlighted.owner === Faction.UNALIGNED) {
-      updateTile(highlighted, { owner: selected.owner, troops: selected.troops });
-      updateTile(selected, { troops: 0 });
+    } else if (highlighted.owner === Faction.UNALIGNED || highlighted.troopCount === 0) {
+      updateTile(highlighted, { owner: selected.owner, troopCount: selected.troopCount });
+      updateTile(selected, { troopCount: 0 });
       maybeSelectTile(highlighted);
     } else {
       // Attack
+      updateTile(selected, { attacking: highlighted });
     }
   }
 }
@@ -165,13 +167,13 @@ function maybeSplit() {
     highlighted !== selected &&
     isAdjacentTile(selected, highlighted)
   ) {
-    const halfRoundedUp = Math.ceil(selected.troops / 2);
+    const halfRoundedUp = Math.ceil(selected.troopCount / 2);
     if (selected.owner === highlighted.owner || highlighted.owner === Faction.UNALIGNED) {
       updateTile(highlighted, {
         owner: selected.owner,
-        troops: highlighted.troops + halfRoundedUp,
+        troopCount: highlighted.troopCount + halfRoundedUp,
       });
-      updateTile(selected, { troops: selected.troops - halfRoundedUp });
+      updateTile(selected, { troopCount: selected.troopCount - halfRoundedUp });
       maybeSelectTile(highlighted);
     }
   }
@@ -220,38 +222,22 @@ function updateTile(tile: TileState, update: TileUpdate) {
           }
           break;
         }
-        case "attackDirection": {
-          const val = entry[1] as TileUpdateVal<typeof key>;
-          classList.remove(
-            AttackDirection.UP,
-            AttackDirection.DOWN,
-            AttackDirection.LEFT,
-            AttackDirection.RIGHT
-          );
-          tile.attackDirection = val;
-          // Add attack direction class
-          if (val !== AttackDirection.NONE) {
-            classList.add(tile.attackDirection);
-          }
-          break;
-        }
         case "attacking": {
           const val = entry[1] as TileUpdateVal<typeof key>;
           tile.attacking = val;
           // Add or remove attacking class
           if (tile.attacking) {
-            classList.add("attacking");
+            classList.add("ATTACKING");
           } else {
-            classList.remove("attacking");
-            updates.push({ attackDirection: AttackDirection.NONE });
+            classList.remove("ATTACKING");
           }
           break;
         }
-        case "troops": {
-          const prevTroops = tile.troops;
+        case "troopCount": {
+          const prevTroopCount = tile.troopCount;
           const val = entry[1] as TileUpdateVal<typeof key>;
-          tile.troops = val;
-          ele.innerHTML = `${tile.troops}`;
+          tile.troopCount = val;
+          ele.innerHTML = `${tile.troopCount}`;
           if (val === 0) {
             occupied.delete(tile);
             updates.push({ status: BattleStatus.UNOCCUPIED });
@@ -259,7 +245,7 @@ function updateTile(tile: TileState, update: TileUpdate) {
             ele.innerHTML = "";
           } else {
             classList.add(tile.owner);
-            if (prevTroops === 0) {
+            if (prevTroopCount === 0) {
               updates.push({ status: BattleStatus.IDLE });
               classList.add("OCCUPIED");
             }
@@ -291,20 +277,13 @@ function getRandomTile(): TileState {
   return tileStates[x][y];
 }
 
-function getTileAt(x: number, y: number): TileState {
-  if (!(tileStates[x] && tileStates[x][y])) {
-    throw new Error("Tile out of bounds!");
-  }
-  return tileStates[x][y];
-}
-
 function runSystems() {
-  // System for increasing troops on occupied territory
+  // System for increasing troopCount on occupied territory
   for (const tile of occupied) {
     if (tile.status === BattleStatus.IDLE) {
       updateTile(tile, { counter: tile.counter + 1 });
       if (tile.counter === 4) {
-        updateTile(tile, { counter: 0, troops: tile.troops + 1 });
+        updateTile(tile, { counter: 0, troopCount: tile.troopCount + 1 });
       }
     }
   }
@@ -336,11 +315,11 @@ function attachKeybindings() {
       case "d":
         if (selected) {
           selected.ele.classList.remove("SELECTED");
-          selected = undefined;
+          selected = null;
         }
         if (highlighted) {
           highlighted.ele.classList.remove("HIGHLIGHTED");
-          highlighted = undefined;
+          highlighted = null;
         }
         break;
       case "x":
@@ -354,12 +333,12 @@ function attachKeybindings() {
 function startGame() {
   // Seed with first squares
   const firstFrog = getRandomTile();
-  updateTile(firstFrog, { owner: Faction.FROG, troops: 10 });
+  updateTile(firstFrog, { owner: Faction.FROG, troopCount: 10 });
   let firstDino: TileState;
   do {
     firstDino = getRandomTile();
   } while (firstDino.owner !== Faction.UNALIGNED);
-  updateTile(firstDino, { owner: Faction.DINO, troops: 10 });
+  updateTile(firstDino, { owner: Faction.DINO, troopCount: 10 });
 
   loop();
 }
@@ -417,4 +396,10 @@ attachKeybindings();
 // Can delegate control to leaders when afk / auto-delegate when disconnected
 
 // Potential exploits:
-// moving troops back and forth to get max ticks on both stacks
+// moving troopCount back and forth to get max ticks on both stacks
+
+// Multiplayer story:
+// Pockets seeded randomly
+// Players attempt to unite a territory...
+// Players of the same faction can create states together if they hold territory for long enough
+// Supply lines through enemy territory are very ineffective

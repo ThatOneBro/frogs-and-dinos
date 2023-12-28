@@ -119,14 +119,14 @@ button:focus-visible {
 }
 
 .game-map-tile.FACTION_DINO.OCCUPIED {
-  background-image: url("yee.jpg");
+  background-image: url("img/yee.jpg");
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
 }
 
 .game-map-tile.FACTION_FROG.OCCUPIED {
-  background-image: url("pepe.jpg");
+  background-image: url("img/pepe.jpg");
   background-repeat: no-repeat;
   background-position: center;
   background-size: cover;
